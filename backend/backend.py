@@ -1,68 +1,144 @@
 from flask import Flask, request, jsonify
-app = Flask(__name__)
-
-#saving and loading messages from a local File
-
-import os
+from flask_cors import CORS
+import uuid
 import json
+import os
+from openai import OpenAI
 
-DATA_FILE = 'messages.json'
+app = Flask(__name__)
+CORS(app)
 
-#Load existing messages
+# Instantiate new OpenAI client (reads OPENAI_API_KEY from env) 
+openai_client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
-if os.path.exists(DATA_FILE):
-    with open(DATA_FILE, 'r') as f:
-        messages = json.load(f)
-else:
-    messages = []
+# In-memory storage
+users = {}
+conversations = {}
+messages = {}
 
-def save_messages():
-    with open(DATA_FILE, 'w') as f:
-        json.dump(messages, f)
+@app.route('/api/login', methods=['POST'])
+def login():
+    phone = request.json.get('phoneNumber')
+    if not phone:
+        return jsonify({'error': 'Phone number required'}), 400
+    users.setdefault(phone, str(uuid.uuid4()))
+    return jsonify({'userId': users[phone], 'phoneNumber': phone})
 
-risk_scores = {}
+@app.route('/api/conversations', methods=['GET'])
+def get_conversations():
+    uid = request.args.get('userId')
+    if not uid:
+        return jsonify({'error': 'User ID required'}), 400
+    out = []
+    for cid, conv in conversations.items():
+        if uid in conv['participants']:
+            other = next(
+                (p for p,u in users.items() if u in conv['participants'] and u != uid),
+                None
+            )
+            last = messages.get(cid, [])
+            last_msg = last[-1]['content'] if last else None
+            out.append({'id': cid, 'otherParticipant': other, 'lastMessage': last_msg})
+    return jsonify(out)
 
-@app.route('/send', methods=['POST'])
+@app.route('/api/conversations', methods=['POST'])
+def create_conversation():
+    data = request.json
+    uid = data.get('userId'); rec = data.get('recipient')
+    if not uid or not rec:
+        return jsonify({'error': 'User ID and recipient required'}), 400
+    users.setdefault(rec, str(uuid.uuid4()))
+    rid = users[rec]
+    # existing?
+    for cid, conv in conversations.items():
+        if uid in conv['participants'] and rid in conv['participants']:
+            return jsonify({'conversationId': cid})
+    # new
+    cid = str(uuid.uuid4())
+    conversations[cid] = {'participants': [uid, rid]}
+    messages[cid] = []
+    return jsonify({'conversationId': cid})
+
+@app.route('/api/messages/<conversation_id>', methods=['GET'])
+def get_messages(conversation_id):
+    return jsonify(messages.get(conversation_id, []))
+
+@app.route('/api/messages', methods=['POST'])
 def send_message():
     data = request.json
-    sender = data.get('sender')
-    receiver = data.get('receiver')
-    text = data.get('message')
+    cid = data.get('conversationId'); sid = data.get('senderId'); txt = data.get('content')
+    if not (cid and sid and txt):
+        return jsonify({'error': 'Conversation ID, sender ID, and content required'}), 400
+    if cid not in conversations:
+        return jsonify({'error': 'Conversation not found'}), 404
+    msg = {'id': str(uuid.uuid4()), 'senderId': sid, 'content': txt, 'timestamp': str(uuid.uuid4())}
+    messages.setdefault(cid, []).append(msg)
+    return jsonify(msg)
 
-    message = {'sender': sender, 'receiver': receiver, 'text':text}
-    messages.append(message)
+@app.route('/api/analyze-conversation', methods=['POST'])
+def analyze_conversation():
+    cid = request.json.get('conversationId')
+    if not cid or cid not in messages:
+        return jsonify({'error': 'Conversation not found'}), 404
 
-    save_messages()
+    # reconstruct text
+    convo = []
+    for m in messages[cid]:
+        sender = next((p for p,u in users.items() if u == m['senderId']), "You")
+        convo.append(f"{sender}: {m['content']}")
+    convo_text = "\n".join(convo)
 
-    return jsonify({'status': 'ok', 'message': message}), 200
+    # build prompt
+    user_prompt = f"""
+Analyze the following conversation using Keirsey's 4 temperaments (Artisan, Guardian, Idealist, Rational)
+and score each on a scale of 1–10. Also score these emotional aspects on 1–10: positiveness, agreeableness,
+toxicity, empathy, emotional_depth.
 
-#Getting messages between two users
-@app.route('/messages/<user1>/<user2>', methods=['GET'])
-def get_messages(user1, user2):
-    chat = [
-        m for m in messages
-        if (m['sender'] == user1 and m['receiver'] == user2) or
-        (m['sender'] == user2 and m['receiver'] == user1)
-    ]
+CONVERSATION:
+{convo_text}
 
-    return jsonify(chat)
+Respond *only* with JSON in this exact schema:
+{{
+  "temperaments": {{
+    "artisan": <int>,
+    "guardian": <int>,
+    "idealist": <int>,
+    "rational": <int>
+  }},
+  "emotional_aspects": {{
+    "positiveness": <int>,
+    "agreeableness": <int>,
+    "toxicity": <int>,
+    "empathy": <int>,
+    "emotional_depth": <int>
+  }},
+  "summary": "<brief summary>"
+}}
+"""
 
-#Setting and Getting risk scores 
-@app.route('/score', methods=['POST'])
-def update_score():
-    data = request.json
-    user1 = data.get('user1')
-    user2 = data.get('user2')
-    score = data.get('score')
+    try:
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that analyzes conversations."},
+                {"role": "user",   "content": user_prompt}
+            ],
+            temperature=0.2,
+            top_p=0.95,
+            max_tokens=1024
+        )
+        text = response.choices[0].message.content
+        analysis = json.loads(text)
+        return jsonify(analysis)
 
-    risk_scores[(user1, user2)] = score
-    return jsonify({'status': 'score updated'}), 200
-
-@app.route('/score/<user1>/<user2>', methods=['GET'])
-def get_score(user1, user2):
-    score = risk_scores.get((user1, user2), 0.0)
-    return jsonify({'score': score})
+    except json.JSONDecodeError as e:
+        return jsonify({
+            "error": "Failed to parse JSON",
+            "exception": str(e),
+            "raw": text
+        }), 500
+    except Exception as e:
+        return jsonify({"error": f"OpenAI API error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
-
