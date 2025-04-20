@@ -33,7 +33,7 @@ def get_conversations():
     for cid, conv in conversations.items():
         if uid in conv['participants']:
             other = next(
-                (p for p,u in users.items() if u in conv['participants'] and u != uid),
+                (p for p, u in users.items() if u in conv['participants'] and u != uid),
                 None
             )
             last = messages.get(cid, [])
@@ -93,15 +93,12 @@ def analyze_conversation():
         convo.append(f"{sender}: {m['content']}")
     convo_text = "\n".join(convo)
 
-    user_prompt = f"""
+    prompt = f"""
 Analyze the following conversation using Keirsey's 4 temperaments (Artisan, Guardian, Idealist, Rational)
 and score each on a scale of 1–10. Also score these emotional aspects on 1–10: positiveness, agreeableness,
-toxicity, empathy, emotional_depth.
+toxicity, empathy, emotional_depth. Finally, determine if the conversation contains signs that one participant
+might be a sex trafficker. Respond *only* with JSON in this exact schema:
 
-CONVERSATION:
-{convo_text}
-
-Respond *only* with JSON in this exact schema:
 {{
   "temperaments": {{
     "artisan": <int>,
@@ -116,16 +113,20 @@ Respond *only* with JSON in this exact schema:
     "empathy": <int>,
     "emotional_depth": <int>
   }},
-  "summary": "<brief summary>"
+  "summary": "<brief summary>",
+  "is_trafficker": <true|false>
 }}
+
+Conversation:
+{convo_text}
 """
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-4o",
+            model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that analyzes conversations."},
-                {"role": "user", "content": user_prompt}
+                {"role": "user", "content": prompt}
             ],
             temperature=0.2,
             top_p=0.95,
@@ -136,11 +137,7 @@ Respond *only* with JSON in this exact schema:
         return jsonify(analysis)
 
     except json.JSONDecodeError as e:
-        return jsonify({
-            "error": "Failed to parse JSON",
-            "exception": str(e),
-            "raw": text if 'text' in locals() else None
-        }), 500
+        return jsonify({"error": "Failed to parse JSON", "exception": str(e), "raw": text}), 500
     except Exception as e:
         return jsonify({"error": f"OpenAI API error: {str(e)}"}), 500
 
