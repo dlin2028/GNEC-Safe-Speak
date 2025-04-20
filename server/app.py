@@ -5,7 +5,7 @@ import json
 import os
 import openai
 
-app = Flask(__name__, static_folder="../client/build")
+app = Flask(__name__, static_folder="../frontend/build")
 CORS(app)
 
 # Instantiate OpenAI client using latest SDK
