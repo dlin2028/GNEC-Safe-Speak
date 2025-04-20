@@ -16,7 +16,7 @@ function ConversationsScreen({ user }) {
 
   const fetchConversations = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/conversations?userId=${user.userId}`);
+      const response = await fetch(`/api/conversations?userId=${user.userId}`);
       const data = await response.json();
       setConversations(data);
     } catch (error) {
@@ -31,7 +31,7 @@ function ConversationsScreen({ user }) {
   const handleNewChat = async () => {
     try {
       // Create conversation
-      const convResponse = await fetch('http://localhost:5000/api/conversations', {
+      const convResponse = await fetch('/api/conversations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -46,7 +46,7 @@ function ConversationsScreen({ user }) {
       
       // Send initial message if any
       if (initialMessage.trim() !== '') {
-        await fetch('http://localhost:5000/api/messages', {
+        await fetch('/api/messages', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

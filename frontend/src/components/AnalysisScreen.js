@@ -19,7 +19,7 @@ function AnalysisScreen({ user }) {
     setError(null);
     
     try {
-      const response = await fetch('http://localhost:5000/api/analyze-conversation', {
+      const response = await fetch('/api/analyze-conversation', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

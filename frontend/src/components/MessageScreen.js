@@ -26,7 +26,7 @@ function MessageScreen({ user }) {
   const fetchMessages = async () => {
     try {
       // Fetch conversation details to get other participant
-      const convResponse = await fetch(`http://localhost:5000/api/conversations?userId=${user.userId}`);
+      const convResponse = await fetch(`/api/conversations?userId=${user.userId}`);
       const conversations = await convResponse.json();
       const currentConv = conversations.find(conv => conv.id === conversationId);
       if (currentConv) {
@@ -34,7 +34,7 @@ function MessageScreen({ user }) {
       }
       
       // Fetch messages
-      const msgResponse = await fetch(`http://localhost:5000/api/messages/${conversationId}`);
+      const msgResponse = await fetch(`/api/messages/${conversationId}`);
       const data = await msgResponse.json();
       setMessages(data);
     } catch (error) {
@@ -47,7 +47,7 @@ function MessageScreen({ user }) {
     if (newMessage.trim() === '') return;
     
     try {
-      await fetch('http://localhost:5000/api/messages', {
+      await fetch('/api/messages', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
