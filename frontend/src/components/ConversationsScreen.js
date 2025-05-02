@@ -1,3 +1,4 @@
+// src/components/ConversationsScreen.js
 
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -12,6 +13,8 @@ function ConversationsScreen({ user }) {
 
   useEffect(() => {
     fetchConversations();
+    const interval = setInterval(fetchConversations, 2000);
+    return () => clearInterval(interval);
   }, []);
 
   const fetchConversations = async () => {
@@ -24,33 +27,29 @@ function ConversationsScreen({ user }) {
     }
   };
 
-  const handleConversationClick = (conversationId) => {
-    navigate(`/messages/${conversationId}`);
+  const handleConversationClick = (conversationId, otherParticipant) => {
+    navigate(
+      `/messages/${conversationId}`,
+      { state: { otherParticipant } }
+    );
   };
 
   const handleNewChat = async () => {
     try {
-      // Create conversation
       const convResponse = await fetch('/api/conversations', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: user.userId,
           recipient: recipientNumber,
         }),
       });
-      
       const convData = await convResponse.json();
-      
-      // Send initial message if any
-      if (initialMessage.trim() !== '') {
+
+      if (initialMessage.trim()) {
         await fetch('/api/messages', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             conversationId: convData.conversationId,
             senderId: user.userId,
@@ -58,15 +57,15 @@ function ConversationsScreen({ user }) {
           }),
         });
       }
-      
-      // Close modal and refresh conversations
+
       setIsNewChatModalOpen(false);
       setRecipientNumber('');
       setInitialMessage('');
-      fetchConversations();
-      
-      // Navigate to the conversation
-      navigate(`/messages/${convData.conversationId}`);
+      // navigate with recipient state
+      navigate(
+        `/messages/${convData.conversationId}`,
+        { state: { otherParticipant: recipientNumber } }
+      );
     } catch (error) {
       console.error('Error creating conversation:', error);
     }
@@ -78,16 +77,16 @@ function ConversationsScreen({ user }) {
         <h1>Messages</h1>
         <button onClick={() => setIsNewChatModalOpen(true)}>New Message</button>
       </div>
-      
+
       <div className="conversations-list">
         {conversations.length === 0 ? (
           <div className="no-conversations">No conversations yet</div>
         ) : (
           conversations.map((conversation) => (
-            <div 
-              key={conversation.id} 
+            <div
+              key={conversation.id}
               className="conversation-item"
-              onClick={() => handleConversationClick(conversation.id)}
+              onClick={() => handleConversationClick(conversation.id, conversation.otherParticipant)}
             >
               <div className="conversation-details">
                 <h2>{conversation.otherParticipant}</h2>
@@ -97,7 +96,7 @@ function ConversationsScreen({ user }) {
           ))
         )}
       </div>
-      
+
       {isNewChatModalOpen && (
         <div className="modal">
           <div className="modal-content">

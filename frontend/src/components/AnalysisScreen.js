@@ -1,13 +1,24 @@
+// src/components/AnalysisScreen.js
+
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import '../styles/AnalysisScreen.css';
 
-function AnalysisScreen() {
-  const [analysis, setAnalysis] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+const temperamentDescriptions = {
+  artisan:  "Practical and spontaneous—excels in hands-on problem solving.",
+  guardian: "Dependable and organized—values stability and community.",
+  idealist: "Empathetic and enthusiastic—seeks growth and harmony.",
+  rational: "Strategic and analytical—focuses on competence and vision."
+};
+
+function AnalysisScreen({ user }) {
   const { conversationId } = useParams();
   const navigate = useNavigate();
+
+  const [analysis, setAnalysis] = useState(null);
+  const [loading,  setLoading]  = useState(true);
+  const [error,    setError]    = useState(null);
+  const [showDesc, setShowDesc] = useState({});
 
   useEffect(() => {
     analyzeConversation();
@@ -16,43 +27,68 @@ function AnalysisScreen() {
   const analyzeConversation = async () => {
     setLoading(true);
     setError(null);
-
     try {
-      const response = await fetch('/api/analyze-conversation', {
+      const resp = await fetch('/api/analyze-conversation', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ conversationId }),
+        body: JSON.stringify({ conversationId, userId: user.userId })
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to analyze conversation');
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || 'Analysis failed');
       }
-
-      const data = await response.json();
-      setAnalysis(data);
-    } catch (error) {
-      console.error('Error analyzing conversation:', error);
-      setError(error.message || 'Something went wrong');
+      setAnalysis(await resp.json());
+    } catch (err) {
+      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
   const renderScoreBar = (score) => {
-    const percentage = (score / 10) * 100;
+    const pct = (score / 10) * 100;
     return (
       <div className="score-bar-container">
-        <div className="score-bar" style={{ width: `${percentage}%` }}></div>
+        <div className="score-bar" style={{ width: `${pct}%` }} />
         <span className="score-value">{score}</span>
       </div>
     );
   };
 
+  const renderTemperaments = (who) => (
+    <div className="temperaments">
+      {Object.entries(analysis.temperaments[who]).map(([type, score]) => (
+        <div key={type} className="score-item">
+          <div className="score-label">
+            {type.charAt(0).toUpperCase() + type.slice(1)}
+            <button
+              className="info-button"
+              onClick={() =>
+                setShowDesc(d => ({
+                  ...d,
+                  [`${who}-${type}`]: !d[`${who}-${type}`]
+                }))
+              }
+            >
+              ℹ️
+            </button>
+          </div>
+          {showDesc[`${who}-${type}`] && (
+            <p className="description">{temperamentDescriptions[type]}</p>
+          )}
+          {renderScoreBar(score)}
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div className="analysis-screen">
       <div className="header">
-        <button onClick={() => navigate(`/messages/${conversationId}`)}>Back</button>
+        <button onClick={() => navigate(`/messages/${conversationId}`)}>
+          Back
+        </button>
         <h2>Conversation Analysis</h2>
       </div>
 
@@ -66,31 +102,28 @@ function AnalysisScreen() {
           </div>
         ) : analysis ? (
           <>
-            {analysis.is_trafficker && (
-              <div className="warning trafficker-warning">
-                ⚠️ <strong>Warning:</strong> This conversation shows signs that the other participant may be involved in sex trafficking. Please take necessary precautions and report if needed.
-              </div>
-            )}
+            <div className="analysis-section">
+              <h3>Your Temperaments</h3>
+              {analysis.is_trafficker && (
+                <div className="warning trafficker-warning">
+                  ⚠️ <strong>Warning:</strong> Signs that the other participant may be a trafficker.
+                </div>
+              )}
+              {renderTemperaments('you')}
+            </div>
 
             <div className="analysis-section">
-              <h3>Temperaments</h3>
-              <div className="temperaments">
-                {Object.entries(analysis.temperaments).map(([type, score]) => (
-                  <div key={type} className="score-item">
-                    <div className="score-label">{type.charAt(0).toUpperCase() + type.slice(1)}</div>
-                    {renderScoreBar(score)}
-                  </div>
-                ))}
-              </div>
+              <h3>Other’s Temperaments</h3>
+              {renderTemperaments('other')}
             </div>
 
             <div className="analysis-section">
               <h3>Emotional Aspects</h3>
               <div className="emotional-aspects">
-                {Object.entries(analysis.emotional_aspects).map(([aspect, score]) => (
-                  <div key={aspect} className="score-item">
+                {Object.entries(analysis.emotional_aspects).map(([asp, score]) => (
+                  <div key={asp} className="score-item">
                     <div className="score-label">
-                      {aspect.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                      {asp.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}
                     </div>
                     {renderScoreBar(score)}
                   </div>

@@ -1,68 +1,85 @@
+// src/components/MessageScreen.js
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import '../styles/MessageScreen.css';
 
 function MessageScreen({ user }) {
-  const [messages, setMessages] = useState([]);
-  const [newMessage, setNewMessage] = useState('');
-  const [otherParticipant, setOtherParticipant] = useState('');
   const { conversationId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Try to read the other participant from route state if provided
+  const initialOther = location.state?.otherParticipant || '';
+
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [otherParticipant, setOtherParticipant] = useState(initialOther);
   const messagesEndRef = useRef(null);
 
+  // Fetch otherParticipant once on mount if not provided
   useEffect(() => {
-    fetchMessages();
-    // Fetch messages every 2 seconds (simulating real-time updates)
+    if (!initialOther) {
+      fetchOtherParticipant();
+    }
+  }, [conversationId]);
+
+  // Poll for new messages every 2 seconds
+  useEffect(() => {
     const interval = setInterval(fetchMessages, 2000);
+    // also fetch immediately
+    fetchMessages();
     return () => clearInterval(interval);
   }, [conversationId]);
 
+  // Scroll to bottom when messages update
   useEffect(() => {
-    // Scroll to bottom when messages change
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const fetchMessages = async () => {
+  async function fetchOtherParticipant() {
     try {
-      // Fetch conversation details to get other participant
-      const convResponse = await fetch(`/api/conversations?userId=${user.userId}`);
-      const conversations = await convResponse.json();
-      const currentConv = conversations.find(conv => conv.id === conversationId);
-      if (currentConv) {
-        setOtherParticipant(currentConv.otherParticipant);
+      const resp = await fetch(`/api/conversations?userId=${user.userId}`);
+      const convs = await resp.json();
+      const conv = convs.find(c => c.id === conversationId);
+      if (conv && conv.otherParticipant) {
+        setOtherParticipant(conv.otherParticipant);
       }
-      
-      // Fetch messages
-      const msgResponse = await fetch(`/api/messages/${conversationId}`);
-      const data = await msgResponse.json();
-      setMessages(data);
-    } catch (error) {
-      console.error('Error fetching messages:', error);
+    } catch (err) {
+      console.error('Error fetching conversation info:', err);
     }
-  };
+  }
+
+  async function fetchMessages() {
+    try {
+      const resp = await fetch(`/api/messages/${conversationId}`);
+      const data = await resp.json();
+      setMessages(data);
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+    }
+  }
 
   const sendMessage = async (e) => {
     e.preventDefault();
     if (newMessage.trim() === '') return;
-    
+
     try {
       await fetch('/api/messages', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           conversationId,
           senderId: user.userId,
           content: newMessage,
         }),
       });
-      
+
       setNewMessage('');
+      // immediately fetch new messages
       fetchMessages();
-    } catch (error) {
-      console.error('Error sending message:', error);
+    } catch (err) {
+      console.error('Error sending message:', err);
     }
   };
 
@@ -71,34 +88,29 @@ function MessageScreen({ user }) {
       <div className="header">
         <button onClick={() => navigate('/conversations')}>Back</button>
         <h2>{otherParticipant}</h2>
-        <button 
-          onClick={() => navigate(`/analysis/${conversationId}`)}
-          className="analyze-button"
-        >
+        <button onClick={() => navigate(`/analysis/${conversationId}`)} className="analyze-button">
           Analyze
         </button>
       </div>
-      
+
       <div className="messages-container">
-        {messages.map((message) => (
-          <div 
-            key={message.id} 
-            className={`message ${message.senderId === user.userId ? 'sent' : 'received'}`}
+        {messages.map(msg => (
+          <div
+            key={msg.id}
+            className={`message ${msg.senderId === user.userId ? 'sent' : 'received'}`}
           >
-            <div className="message-bubble">
-              {message.content}
-            </div>
+            <div className="message-bubble">{msg.content}</div>
           </div>
         ))}
         <div ref={messagesEndRef} />
       </div>
-      
+
       <form onSubmit={sendMessage} className="message-input">
         <input
           type="text"
           placeholder="Message"
           value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
+          onChange={e => setNewMessage(e.target.value)}
         />
         <button type="submit">Send</button>
       </form>

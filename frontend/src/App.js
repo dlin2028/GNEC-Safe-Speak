@@ -5,6 +5,7 @@ import LoginScreen from './components/LoginScreen';
 import ConversationsScreen from './components/ConversationsScreen';
 import MessageScreen from './components/MessageScreen';
 import AnalysisScreen from './components/AnalysisScreen';
+import LeaderboardScreen from './components/LeaderboardScreen';
 import './App.css';
 
 function App() {
@@ -25,6 +26,9 @@ function App() {
           }/>
           <Route path="/analysis/:conversationId" element={
             !user ? <Navigate to="/login" /> : <AnalysisScreen user={user} />
+          }/>
+          <Route path="/leaderboard" element={
+            <LeaderboardScreen user={user} />
           }/>
           <Route path="*" element={<Navigate to={user ? "/conversations" : "/login"} />} />
         </Routes>

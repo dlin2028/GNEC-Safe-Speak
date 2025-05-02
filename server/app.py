@@ -15,6 +15,9 @@ openai_client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
 users = {}
 conversations = {}
 messages = {}
+conversation_scores = {}
+conversation_summaries = {}
+conversation_lb_summaries = {}  # leaderboard-only summaries
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -83,28 +86,37 @@ def send_message():
 
 @app.route('/api/analyze-conversation', methods=['POST'])
 def analyze_conversation():
-    cid = request.json.get('conversationId')
-    if not cid or cid not in messages:
-        return jsonify({'error': 'Conversation not found'}), 404
+    data = request.json or {}
+    cid = data.get('conversationId')
+    you_id = data.get('userId')
 
-    convo = []
-    for m in messages[cid]:
-        sender = next((p for p, u in users.items() if u == m['senderId']), "You")
-        convo.append(f"{sender}: {m['content']}")
-    convo_text = "\n".join(convo)
+    if not cid or cid not in messages:
+        return jsonify({'error': 'conversationId required'}), 400
+
+    participants = conversations.get(cid, {}).get('participants', [])
+    if not participants:
+        return jsonify({'error': 'Conversation not found'}), 404
+    if you_id not in participants:
+        you_id = participants[0]
+    other_id = next(pid for pid in participants if pid != you_id)
+
+    you_lines = [f"You: {m['content']}" for m in messages[cid] if m['senderId'] == you_id]
+    other_lines = [f"Other: {m['content']}" for m in messages[cid] if m['senderId'] == other_id]
 
     prompt = f"""
-Analyze the following conversation using Keirsey's 4 temperaments (Artisan, Guardian, Idealist, Rational)
-and score each on a scale of 1–10. Also score these emotional aspects on 1–10: positiveness, agreeableness,
-toxicity, empathy, emotional_depth. Finally, determine if the conversation contains signs that one participant
-might be a sex trafficker. Respond *only* with JSON in this exact schema:
+You will receive two labeled streams: "You:" (the user) and "Other:" (the partner). Perform:
+
+1. **Keirsey Temperaments**: Score Artisan, Guardian, Idealist, Rational (1–10) for each stream. In **summary**, briefly explain how you derived each temperament score. The summary will be given to the user, so address them directly.
+2. **Emotional Aspects**: Score (1–10) positiveness, agreeableness, toxicity, empathy, emotional_depth across the whole conversation.
+3. **Trafficker Detection**: Analyze ONLY the "Other" stream. Ignore "You" messages. Set "is_trafficker": true only if you are highly confident the Other is recruiting. Otherwise false.
+4. **Leaderboard Summary**: Provide a one-sentence overview highlighting why this conversation ranks high in toxicity.
+
+Respond **only** with JSON matching this schema exactly:
 
 {{
   "temperaments": {{
-    "artisan": <int>,
-    "guardian": <int>,
-    "idealist": <int>,
-    "rational": <int>
+    "you": {{ "artisan": <int>, "guardian": <int>, "idealist": <int>, "rational": <int> }},
+    "other": {{ "artisan": <int>, "guardian": <int>, "idealist": <int>, "rational": <int> }}
   }},
   "emotional_aspects": {{
     "positiveness": <int>,
@@ -113,27 +125,37 @@ might be a sex trafficker. Respond *only* with JSON in this exact schema:
     "empathy": <int>,
     "emotional_depth": <int>
   }},
-  "summary": "<brief summary>",
-  "is_trafficker": <true|false>
+  "summary": "<detailed summary and scoring rationale>",
+  "is_trafficker": <true|false>,
+  "leaderboard_summary": "<one-sentence leaderboard summary>"
 }}
 
-Conversation:
-{convo_text}
+You conversation:
+{"\n".join(you_lines)}
+
+Other conversation:
+{"\n".join(other_lines)}
 """
 
     try:
-        response = openai_client.chat.completions.create(
+        resp = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "You are a helpful assistant that analyzes conversations."},
+                {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt}
             ],
             temperature=0.2,
             top_p=0.95,
-            max_tokens=1024
+            max_tokens=1200
         )
-        text = response.choices[0].message.content
+        text = resp.choices[0].message.content
         analysis = json.loads(text)
+
+        # Store toxicity, full summary, and leaderboard-only summary
+        conversation_scores[cid] = analysis["emotional_aspects"]["toxicity"]
+        conversation_summaries[cid] = analysis.get("summary", "")
+        conversation_lb_summaries[cid] = analysis.get("leaderboard_summary", "")
+
         return jsonify(analysis)
 
     except json.JSONDecodeError as e:
@@ -141,14 +163,31 @@ Conversation:
     except Exception as e:
         return jsonify({"error": f"OpenAI API error: {str(e)}"}), 500
 
-# Optional: serve React frontend (if deployed together)
+@app.route('/api/leaderboard', methods=['GET'])
+def get_leaderboard():
+    top = sorted(conversation_scores.items(), key=lambda kv: kv[1], reverse=True)[:10]
+    name_by_id = {uid: name for name, uid in users.items()}
+    result = []
+    for cid, tox in top:
+        conv = conversations.get(cid, {})
+        parts = conv.get("participants", [])
+        names = [name_by_id.get(p, p) for p in parts]
+        lb_summary = conversation_lb_summaries.get(cid, "")
+        result.append({
+            "conversationId": cid,
+            "participants": names,
+            "toxicity": tox,
+            "leaderboardSummary": lb_summary
+        })
+    return jsonify(result)
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_react(path):
-    if path != "" and os.path.exists(app.static_folder + "/" + path):
+    full = os.path.join(app.static_folder, path)
+    if path and os.path.exists(full):
         return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, "index.html")
+    return send_from_directory(app.static_folder, "index.html")
 
 if __name__ == '__main__':
     app.run(debug=True)
